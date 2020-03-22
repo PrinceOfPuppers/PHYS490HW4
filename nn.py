@@ -36,9 +36,9 @@ class NeralNet(nn.Module):
             nn.ReLU(),            
             nn.Linear(25,75),
             nn.ReLU(),
-            nn.Linear(75,150),
+            nn.Linear(75,14*14),
             nn.ReLU(),
-            nn.Linear(150,14*14),
+            nn.Linear(14*14,14*14),
             nn.Sigmoid()
         )
 
@@ -63,9 +63,9 @@ class NeralNet(nn.Module):
        sigma=torch.exp(logSigma)
 
        klDivergence=0.5*torch.sum(sigma+torch.mul(mu,mu)-logSigma-1)
-       loss=funct.binary_cross_entropy(output,target,reduction="sum")
-       #print(klDivergence,loss)
-       return (loss+self.betaFunct(epoch)*klDivergence)
+       recLoss=funct.binary_cross_entropy(output,target,reduction="sum")
+       loss=recLoss+self.betaFunct(epoch)*klDivergence
+       return loss,recLoss,klDivergence
         
 
     def forward(self,x):
@@ -78,7 +78,6 @@ class NeralNet(nn.Module):
 
         sigma = torch.exp(logSigma)
         normal = torch.randn_like(sigma)
-
         x = mu + normal * sigma
 
         x=self.decoder(x)
@@ -94,25 +93,47 @@ class NeralNet(nn.Module):
         x=x.view(14*14)
         return x
 
+
+    def sampleEncoder(self,x):
+        x=x.view(-1,1,14,14)
+        #x=x.view(-1,1,self.inputRes[0],self.inputRes[1])
+        x=x.to(self.device)
+        #pass through enocder
+        x=self.encoder(x)
+        x=x.view(-1,self.flattenDim)
+        x=self.alsoEncoder(x)
+
+        # Pass through latent layer
+        mu=self.mu(x)
+        logSigma=self.logSigma(x)
+        sigma = torch.exp(logSigma)
+        normal = torch.randn_like(sigma)
+        x = mu + normal * sigma
+        return(x)
+        
     def train(self,trainData,batchSize,epoch):
 
         trainSize=len(trainData)
         avgLoss=0
-        for param_group in self.optimizer.param_groups:
-            print(param_group['lr'])
+        avgRecLoss=0
+        avgKLD=0
         for i in range(0,trainSize,batchSize):
 
             imgBatch=trainData[i:i+batchSize].to(self.device)
             self.zero_grad()
             outputs,mu,logSigma=self(imgBatch)
-            loss=self.lossFunct(outputs,imgBatch,mu,logSigma,epoch)
+            loss,recLoss,kLD=self.lossFunct(outputs,imgBatch,mu,logSigma,epoch)
             loss.backward()
             self.optimizer.step()
 
             avgLoss+=loss.item()*len(imgBatch)
+            avgRecLoss+=recLoss.item()*len(imgBatch)
+            avgKLD+=kLD.item()*len(imgBatch)
 
         avgLoss=avgLoss/trainSize
+        avgRecLoss=avgRecLoss/trainSize
+        avgKLD=avgKLD/trainSize
         print("Training loss:",avgLoss)
         self.scheduler.step()
-        return (avgLoss)
+        return (avgLoss,avgRecLoss,avgKLD)
     

@@ -1,7 +1,7 @@
 import numpy as np
 from math import sin,cos,pi
-import sys
-from random import random
+import getopt,sys
+from random import random,shuffle
 import matplotlib.pyplot as plt
 import matplotlib.animation as ani
 from tqdm import tqdm
@@ -55,7 +55,7 @@ def makeAnimation(cfg,nn):
 
 def makeLatentSpaceMap(cfg,nn,trainer):
     pointDict={label: [] for label in cfg.allLabels}
-    numSamples=int(len(trainer.trainingImgs)/100)
+    numSamples=int(len(trainer.trainingImgs)/50)
     print("Sampling Encoder with {} Data Points".format(numSamples))
     for i in tqdm(range(0,numSamples)):
         img=trainer.trainingImgs[i]
@@ -67,7 +67,6 @@ def makeLatentSpaceMap(cfg,nn,trainer):
     fig=plt.figure()
     ax=fig.add_subplot(111)
     for i,label in tqdm(enumerate(pointDict)):
-        print(i,label)
         pointsX=[point[0] for point in pointDict[label]]
         pointsY=[point[1] for point in pointDict[label]]
         
@@ -113,34 +112,57 @@ def shuffleData(data):
     np.random.shuffle(data)
     return(data)
 
-#def generatePDFs(nn,cfg,number):
-#    for i in range(0,number):
-#        r=i/number
-#        theta=2*pi*i/number
-#        x=r*cos(theta)
-#        y=r*sin(theta)
+def generatePDFs(nn,cfg,hyp,trainer):
+    print("Saving Results")
+    #plots losses
+    epochs=[i for i in range(0,hyp.epochs)]
+    plt.plot(epochs,trainer.recLoss,label="Reconstruction Loss",color='green')
+    plt.plot(epochs,trainer.kLD,label="KLDivergence", color='blue')
+    plt.title("Reconstruction Loss and KLD over Epochs")
+    plt.xlabel("Epochs")
+    plt.legend()
+    plt.savefig(cfg.savePDFLocation+'\{}'.format("Loss"))
+    plt.clf()
+
+    #plots samples
+    rs=[2*j/cfg.numPDFs for j in range(0,cfg.numPDFs)]
+    thetas=[2*pi*j/cfg.numPDFs for j in range(0,cfg.numPDFs)]
+    shuffle(rs)
+    shuffle(thetas)
+    for i in range(0,cfg.numPDFs):
+        r=rs[i]
+        theta=thetas[i]
+        x=r*cos(theta)
+        y=r*sin(theta)
+        point=np.array([x,y],dtype=np.float32)
+        sample=sampleLatentSpace(cfg,nn,point)
+        plt.imshow(sample,cmap='Greys')
+        plt.title("figure {}; Latent Space Vector ({},{})".format(i,round(x,3),round(y,3)))
+        plt.savefig(cfg.savePDFLocation+'\{}'.format(i))
+        plt.clf()
+    
+    print("Results saved in {}".format(cfg.savePDFLocation))
+
+
 
 
 if __name__ == "__main__":
     cfg=Config()
-    if cfg.generateNewNet:
-        hyp=Hyperparameters()
+    cfg.getArgs()
 
-        data,balanceTracker=getDataArray(cfg.dataPath,cfg)
-        trainingData=shuffleData(data)
 
-        net=NeralNet(hyp)
-        trainer=Trainer(cfg,trainingData)
+    hyp=Hyperparameters()
 
-        trainer.train(net,hyp)
-    else:
-        net=loadNet(cfg)
-    
-    if cfg.saveNet:
-        saveNet(net,cfg)
-    makeAnimation(cfg,net)
-    #data,balanceTracker=getDataArray(cfg.dataPath,cfg)
-    #trainingData=shuffleData(data)
-    #trainer=Trainer(cfg,trainingData)
-    #makeLatentSpaceMap(cfg,net,trainer)
+    data,balanceTracker=getDataArray(cfg.dataPath,cfg)
+    trainingData=shuffleData(data)
+
+    net=NeralNet(hyp)
+    trainer=Trainer(cfg,trainingData)
+
+    trainer.train(net,hyp)
+    if trainer.trainingLoss[-1]>20300:
+        print(">>Network Stuck in Local Minimum, Please Re-run to get Proper Results")
+
+
+    generatePDFs(net,cfg,hyp,trainer)
 

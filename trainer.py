@@ -6,6 +6,8 @@ import torch.nn as nn
 class Trainer:
     def __init__(self,cfg,trainingData):
         self.trainingLoss=[]
+        self.recLoss=[]
+        self.kLD=[]
 
         self.trainingImgs=torch.from_numpy(np.stack(trainingData[:,0]))
         self.trainingLabels=torch.from_numpy(np.stack(trainingData[:,1]))
@@ -14,5 +16,7 @@ class Trainer:
     def train(self,neuralNet,hyp):
         for i in range(0,hyp.epochs):
             print("Training Epoch {}:".format(i+1))
-            trainLoss=neuralNet.train(self.trainingImgs,hyp.trainBatchSize,i)
+            trainLoss,recLoss,kLDLoss=neuralNet.train(self.trainingImgs,hyp.trainBatchSize,i)
             self.trainingLoss.append(trainLoss)
+            self.recLoss.append(recLoss)
+            self.kLD.append(kLDLoss)
