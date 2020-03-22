@@ -1,6 +1,7 @@
 from math import sin,cos,pi
 import numpy as np
 import sys,getopt
+import os
 
 class Config:
     def __init__(self):
@@ -46,6 +47,9 @@ class Config:
 
         self.numPDFs=number
         self.savePDFLocation=outputFile
+
+        if not os.path.exists(self.savePDFLocation):
+            os.mkdir(self.savePDFLocation)
 
     def parametricSeedPoint(self,t):
         amp=2
