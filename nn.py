@@ -5,6 +5,13 @@ import torch.optim as optim
 from math import sqrt
 from tqdm import tqdm
 
+def sampleGaussians(mu,logSigma):
+    sigma=torch.exp(logSigma)
+    normal=torch.randn_like(sigma)
+    x=normal*sigma+mu
+    return(x)
+
+
 def saveNet(net,cfg):
     print("Saving Network")
     torch.save(net,cfg.netSaveLocation)
@@ -76,9 +83,7 @@ class NeralNet(nn.Module):
         mu=self.mu(x)
         logSigma=self.logSigma(x)
 
-        sigma = torch.exp(logSigma)
-        normal = torch.randn_like(sigma)
-        x = mu + normal * sigma
+        x=sampleGaussians(mu,logSigma)
 
         x=self.decoder(x)
 
@@ -105,10 +110,7 @@ class NeralNet(nn.Module):
 
         # Pass through latent layer
         mu=self.mu(x)
-        logSigma=self.logSigma(x)
-        sigma = torch.exp(logSigma)
-        normal = torch.randn_like(sigma)
-        x = mu + normal * sigma
+        x=sampleGaussians(mu,logSigma)
         return(x)
         
     def train(self,trainData,batchSize,epoch):
