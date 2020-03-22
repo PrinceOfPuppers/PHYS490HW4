@@ -1,12 +1,13 @@
 import numpy as np
+from math import sin,cos,pi
 import sys
-import json
 from random import random
 import matplotlib.pyplot as plt
 import matplotlib.animation as ani
+from tqdm import tqdm
 from config import Config
 from hyperparameters import Hyperparameters
-from nn import NeralNet
+from nn import NeralNet,saveNet,loadNet
 from trainer import Trainer
 
 #function for debugging data loading, along with checking balance 
@@ -42,8 +43,8 @@ def sampleLatentSpace(cfg,nn,point):
 def makeAnimation(cfg,nn):
     frameList=[]
     fig=plt.figure()
-    for frameNumber,t in enumerate(cfg.tVals):
-        print("rendering frame",frameNumber+1)
+    print("Rendering Animation")
+    for t in tqdm(cfg.tVals):
         point=cfg.parametricSeedPoint(t)
         imageArray=sampleLatentSpace(cfg,nn,point)
         frame=plt.imshow(imageArray,cmap='Greys')
@@ -52,6 +53,34 @@ def makeAnimation(cfg,nn):
     animation=ani.ArtistAnimation(fig,frameList,interval=(1000/cfg.framerate))
     plt.show()
 
+def makeLatentSpaceMap(cfg,nn,trainer):
+    pointDict={label: [] for label in cfg.allLabels}
+    numSamples=int(len(trainer.trainingImgs)/100)
+    print("Sampling Encoder with {} Data Points".format(numSamples))
+    for i in tqdm(range(0,numSamples)):
+        img=trainer.trainingImgs[i]
+        label=cfg.allLabels[int(trainer.trainingLabels[i].argmax())]
+
+        point=nn.sampleEncoder(img).tolist()[0]
+        pointDict[label].append(point)
+    
+    fig=plt.figure()
+    ax=fig.add_subplot(111)
+    for i,label in tqdm(enumerate(pointDict)):
+        print(i,label)
+        pointsX=[point[0] for point in pointDict[label]]
+        pointsY=[point[1] for point in pointDict[label]]
+        
+        ax.scatter(pointsX,pointsY,color=cfg.scatterColors[i])
+    
+    ax.set_title("Map of Latent Space")
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+
+    #ax.legend()
+    plt.show()
+
+    
 
 def getDataArray(path,cfg):
     print("Loading Data")
@@ -59,9 +88,10 @@ def getDataArray(path,cfg):
     data=[]
     balanceTracker=[0]*cfg.numLabels
 
-    for line in rawData:
+    for line in tqdm(rawData):
+        labelIndex=-1
         line=line.strip()
-        label=float(line[-1])
+        label=float(line[labelIndex])
         labelNum=cfg.allLabels.index(label)
 
         balanceTracker[labelNum]+=1
@@ -79,29 +109,38 @@ def getDataArray(path,cfg):
     data=np.array(data)
     return(data,balanceTracker)
 
-#shuffles data and splits it into training and testing sets
-def partitionAndShuffleData(hyp,data):
-    #Shuffle Data
-    print("Shuffling Data")
+def shuffleData(data):
     np.random.shuffle(data)
-    trainingData=data[0:-hyp.testSize]
-    testingData=data[:hyp.testSize]
+    return(data)
 
-    return(trainingData,testingData)
-
+#def generatePDFs(nn,cfg,number):
+#    for i in range(0,number):
+#        r=i/number
+#        theta=2*pi*i/number
+#        x=r*cos(theta)
+#        y=r*sin(theta)
 
 
 if __name__ == "__main__":
     cfg=Config()
-    hyp=Hyperparameters()
+    if cfg.generateNewNet:
+        hyp=Hyperparameters()
 
-    data,balanceTracker=getDataArray(cfg.dataPath,cfg)
-    trainingData,testingData=partitionAndShuffleData(hyp,data)
+        data,balanceTracker=getDataArray(cfg.dataPath,cfg)
+        trainingData=shuffleData(data)
 
-    net=NeralNet(hyp)
-    trainer=Trainer(cfg,trainingData,testingData)
+        net=NeralNet(hyp)
+        trainer=Trainer(cfg,trainingData)
 
-    trainer.trainAndTest(net,hyp)
-
-    makeAnimation(cfg,net)
+        trainer.train(net,hyp)
+    else:
+        net=loadNet(cfg)
     
+    if cfg.saveNet:
+        saveNet(net,cfg)
+    makeAnimation(cfg,net)
+    #data,balanceTracker=getDataArray(cfg.dataPath,cfg)
+    #trainingData=shuffleData(data)
+    #trainer=Trainer(cfg,trainingData)
+    #makeLatentSpaceMap(cfg,net,trainer)
+

@@ -5,120 +5,107 @@ import torch.optim as optim
 from math import sqrt
 from tqdm import tqdm
 
+def saveNet(net,cfg):
+    print("Saving Network")
+    torch.save(net,cfg.netSaveLocation)
+
+def loadNet(cfg):
+    print("Loading Network")
+    net=torch.load(cfg.netSaveLocation)
+    return net
+
 class NeralNet(nn.Module):
     def __init__(self, hyp):
         super().__init__()
-        self.inputRes=hyp.imageRes
-        self.imagChannels=1
-        self.maxPooling=[(2,2),(1,1)]
-        # Populate encoder
-        self.encoder=nn.ModuleList()
-        
-        convLayer=nn.Conv2d(self.imagChannels,32,3,1)
-        self.encoder.append(convLayer)
-        convLayer=nn.Conv2d(32,64,3,1)
-        self.encoder.append(convLayer)
-        
-        self.numConv=len(self.encoder)
+        self.encoder=nn.Sequential(
+            nn.Conv2d(1, 10,3),
+            nn.ReLU(),
+        )
         self.flattenDim=self.determineFlatten()
+        self.alsoEncoder=nn.Sequential(
+            nn.Linear(self.flattenDim, 100),
+            nn.ReLU(),
+            nn.Linear(100,50),
+            nn.ReLU()
+        )
+        self.logSigma=nn.Linear(50, 2)
+        self.mu=nn.Linear(50, 2)
 
-        fcLayer = nn.Linear(self.flattenDim, 32)
-        self.encoder.append(fcLayer)
+        self.decoder=nn.Sequential(
+            nn.Linear(2,25),
+            nn.ReLU(),            
+            nn.Linear(25,75),
+            nn.ReLU(),
+            nn.Linear(75,150),
+            nn.ReLU(),
+            nn.Linear(150,14*14),
+            nn.Sigmoid()
+        )
 
-        # Add latent layer
-        self.latent=nn.ModuleList()
-
-        self.mu=nn.Linear(32, hyp.latentNodes)
-        self.sigma=nn.Linear(32, hyp.latentNodes)
-        
-        self.latent.append(self.mu)
-        self.latent.append(self.sigma)
-
-        # Populate decoder
-        self.decoder = nn.ModuleList()
-
-        fcLayer = nn.Linear(hyp.latentNodes, 32)
-        self.decoder.append(fcLayer)
-        fcLayer = nn.Linear(32,100)
-        self.decoder.append(fcLayer)
-        fcLayer = nn.Linear(100,14*14)
-        self.decoder.append(fcLayer)
-
-        # Use only CPU due to small network size and occasional bugs
-        self.device = torch.device("cuda:0")
+        if torch.cuda.is_available():
+            print("Using Cuda")
+            self.device=torch.device("cuda:0")
+        else:
+            print("Cuda not avalible, using CPU")
+            self.device=torch.device("cpu")
         self.to(self.device)
 
-        # Optimizer and loss functions
-        self.optimizer = hyp.optimizer(self.parameters(), hyp.learningRate)
         self.betaFunct=hyp.betaFunct
-    
+        self.optimizer=optim.Adam(self.parameters(),lr=hyp.initalLr)
+        self.scheduler=optim.lr_scheduler.CosineAnnealingLR(self.optimizer,hyp.epochs,hyp.finalLr)
 
     def determineFlatten(self):
-        x=torch.randn(1,1,self.inputRes[0],self.inputRes[1]).view(-1,1,self.inputRes[0],self.inputRes[1])
-        for i,conv in enumerate(self.encoder):
-            if i==self.numConv:
-                break
-            x=funct.max_pool2d(funct.relu(conv(x)),self.maxPooling[i])
+        x=torch.randn(1,1,14,14).view(-1,1,14,14)
+        x=self.encoder(x)
         return x[0].shape[0]*x[0].shape[1]*x[0].shape[2]
+
+    def lossFunct(self,output,target,mu,logSigma,epoch):
+       sigma=torch.exp(logSigma)
+
+       klDivergence=0.5*torch.sum(sigma+torch.mul(mu,mu)-logSigma-1)
+       loss=funct.binary_cross_entropy(output,target,reduction="sum")
+       #print(klDivergence,loss)
+       return (loss+self.betaFunct(epoch)*klDivergence)
         
-    def lossFunct(self,output,target,mu,sigma,epoch):
-       sigmaSqrd=torch.mul(sigma,sigma)
-       klDivergence=torch.sum(sigmaSqrd+torch.mul(mu,mu)-torch.log(sigmaSqrd)-torch.ones(mu.size()).to(self.device))
-       loss=funct.mse_loss(output,target)
-       return loss+self.betaFunct(epoch)*klDivergence
-    
-    def forward(self, x):
-        x=x.view(-1,1,self.inputRes[0],self.inputRes[1])
-        #pass through convolution
-        for i,layer in enumerate(self.encoder):
-            if i<self.numConv:
-                x=funct.max_pool2d(funct.relu(layer(x)),self.maxPooling[i])
-            elif i==self.numConv:
-                x=x.view(-1,self.flattenDim)
-                x=funct.relu(layer(x))
-            else:
-                x = funct.relu(layer(x))
 
-        # Pass through latent layer
+    def forward(self,x):
+        x=x.view(-1,1,14,14)
+        x=self.encoder(x)
+        x=x.view(-1,self.flattenDim)
+        x=self.alsoEncoder(x)
         mu=self.mu(x)
-        sigma=self.sigma(x)
-        #sample
-        x=torch.distributions.Normal(mu,sigma).sample()
-        # Pass through decoder layers (without applying relu on answer neuron)
+        logSigma=self.logSigma(x)
 
-        for i, layer in enumerate(self.decoder):
-            if i==len(self.decoder)-1:
-                x=layer(x)
-            else:
-                x = funct.relu(layer(x))
+        sigma = torch.exp(logSigma)
+        normal = torch.randn_like(sigma)
 
-        return x,mu,sigma
+        x = mu + normal * sigma
 
+        x=self.decoder(x)
 
-
+        return x,mu,logSigma
 
     def sampleLatent(self,x):
         x=torch.from_numpy(x)
         x=x.to(self.device)
 
-        for i, layer in enumerate(self.decoder):
-            if i==len(self.decoder)-1:
-                x=layer(x)
-            else:
-                x = funct.relu(layer(x))
+        x=self.decoder(x)
 
+        x=x.view(14*14)
         return x
 
-
-
     def train(self,trainData,batchSize,epoch):
+
         trainSize=len(trainData)
         avgLoss=0
-        for i in tqdm(range(0,trainSize,batchSize)):
+        for param_group in self.optimizer.param_groups:
+            print(param_group['lr'])
+        for i in range(0,trainSize,batchSize):
+
             imgBatch=trainData[i:i+batchSize].to(self.device)
             self.zero_grad()
-            outputs,mu,sigma=self(imgBatch)
-            loss=self.lossFunct(outputs,imgBatch,mu,sigma,epoch)
+            outputs,mu,logSigma=self(imgBatch)
+            loss=self.lossFunct(outputs,imgBatch,mu,logSigma,epoch)
             loss.backward()
             self.optimizer.step()
 
@@ -126,19 +113,6 @@ class NeralNet(nn.Module):
 
         avgLoss=avgLoss/trainSize
         print("Training loss:",avgLoss)
+        self.scheduler.step()
         return (avgLoss)
     
-    def test(self,testData,batchSize,epoch):
-        avgLoss=0
-        testSize=len(testData)
-        with torch.no_grad():
-            for i in tqdm(range(0,testSize,batchSize)):
-                imgBatch=testData[i:i+batchSize].to(self.device)
-                outputs,mu,sigma=self(imgBatch)
-                loss=self.lossFunct(outputs,imgBatch,mu,sigma,epoch)
-
-                avgLoss+=loss.item()*len(imgBatch)
-
-        avgLoss=avgLoss/testSize
-        print("Testing Loss:",avgLoss)
-        return (avgLoss)
